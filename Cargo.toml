@@ -23,3 +23,7 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = "symbols"
+
+[dev-dependencies]
+serial_test = { version = "3.4.0", features = ["file_locks"] }
+tempfile = "3.27.0"

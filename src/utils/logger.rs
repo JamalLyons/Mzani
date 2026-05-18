@@ -1,6 +1,6 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::utils::log_record::{LogLevel, LogRecord};
@@ -16,15 +16,14 @@ pub(crate) struct Logger
 
 impl Logger
 {
-    /// Creates a logger that writes under `logs/` with level filter from `MZANI_LOG`.
+    /// Creates a logger that appends to `log_dir/mzani.log`.
     ///
     /// # Errors
     ///
     /// Returns [`MzaniError::LoggerInit`] if the log directory or file cannot be created.
-    pub fn new() -> MzaniResult<Self>
+    pub fn new_in_dir(log_dir: &Path) -> MzaniResult<Self>
     {
-        let log_dir = PathBuf::from("logs");
-        fs::create_dir_all(&log_dir)
+        fs::create_dir_all(log_dir)
             .map_err(|error| MzaniError::LoggerInit(format!("failed to create log directory: {error}")))?;
 
         let log_path = log_dir.join("mzani.log");
@@ -76,29 +75,15 @@ mod tests
     #[test]
     fn write_record_appends_line() -> Result<(), Box<dyn std::error::Error>>
     {
-        let temp_root = std::env::temp_dir().join(format!("mzani-log-test-{}", std::process::id()));
-        fs::create_dir_all(&temp_root)?;
-        let previous = std::env::current_dir()?;
-        std::env::set_current_dir(&temp_root)?;
-
-        let result = (|| {
-            let logger = Logger::new()?;
-            let record = LogRecord::new(LogLevel::Info, "test_event", LogRole::Log).field("msg", "hello");
-            logger.write_record(&record)?;
-            let log_file = fs::read_dir("logs")?
-                .filter_map(Result::ok)
-                .map(|entry| entry.path())
-                .find(|path| path.is_file())
-                .ok_or("missing log file")?;
-            let mut contents = String::new();
-            fs::File::open(log_file)?.read_to_string(&mut contents)?;
-            assert!(contents.contains("event=test_event"));
-            assert!(contents.contains("msg=hello"));
-            Ok::<(), Box<dyn std::error::Error>>(())
-        })();
-
-        std::env::set_current_dir(previous)?;
-        let _ = fs::remove_dir_all(temp_root);
-        result
+        let temp = tempfile::tempdir()?;
+        let log_dir = temp.path().join("logs");
+        let logger = Logger::new_in_dir(&log_dir)?;
+        let record = LogRecord::new(LogLevel::Info, "test_event", LogRole::Log).field("msg", "hello");
+        logger.write_record(&record)?;
+        let mut contents = String::new();
+        fs::File::open(log_dir.join("mzani.log"))?.read_to_string(&mut contents)?;
+        assert!(contents.contains("event=test_event"));
+        assert!(contents.contains("msg=hello"));
+        Ok(())
     }
 }

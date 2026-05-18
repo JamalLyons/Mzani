@@ -1,8 +1,8 @@
 use std::io::{self, Read};
 
+use crate::MzaniResult;
 use crate::core::request::{header_field, parse_header_fields, read_header_block};
 use crate::utils::{Byte, Bytes, parse_err};
-use crate::MzaniResult;
 
 const CHUNK_HEADER_END: &[Byte] = b"\r\n";
 
@@ -36,8 +36,31 @@ pub(crate) fn read_http_response(stream: &mut impl Read) -> MzaniResult<Bytes>
         BodyMode::UntilEof => read_until_eof(&mut reader)?,
     };
 
-    let mut message = raw_head;
-    message.extend_from_slice(&body);
+    encode_forwarded_response(&raw_head, status, &headers, &body)
+}
+
+/// Rebuilds a response with an explicit `Content-Length` for transparent proxying.
+fn encode_forwarded_response(raw_head: &[u8], status: u16, headers: &[(String, String)], body: &[u8]) -> MzaniResult<Bytes>
+{
+    if matches!(status, 100..=199 | 204 | 304) {
+        return Ok(raw_head.to_vec());
+    }
+
+    let head = std::str::from_utf8(raw_head).map_err(|_| parse_err("invalid utf-8 in response"))?;
+    let status_line = head.lines().next().ok_or_else(|| parse_err("missing status line"))?;
+
+    let mut lines = vec![status_line.to_owned()];
+    for (name, value) in headers {
+        if name.eq_ignore_ascii_case("transfer-encoding") || name.eq_ignore_ascii_case("content-length") {
+            continue;
+        }
+        lines.push(format!("{name}: {value}"));
+    }
+    lines.push(format!("Content-Length: {}", body.len()));
+
+    let mut message = lines.join("\r\n").into_bytes();
+    message.extend_from_slice(b"\r\n\r\n");
+    message.extend_from_slice(body);
     Ok(message)
 }
 
@@ -61,9 +84,7 @@ fn body_mode(headers: &[(String, String)], status: u16) -> MzaniResult<BodyMode>
         return Ok(BodyMode::Fixed(0));
     }
 
-    if header_field(headers, "transfer-encoding")
-        .is_some_and(|value| value.eq_ignore_ascii_case("chunked"))
-    {
+    if header_field(headers, "transfer-encoding").is_some_and(|value| value.eq_ignore_ascii_case("chunked")) {
         return Ok(BodyMode::Chunked);
     }
 
@@ -148,8 +169,7 @@ fn read_chunked_body(stream: &mut impl Read) -> MzaniResult<Bytes>
         let size_line = read_line(stream)?;
         let size_line = std::str::from_utf8(&size_line).map_err(|_| parse_err("invalid chunk size line"))?;
         let size_token = size_line.split(';').next().unwrap_or(size_line).trim();
-        let chunk_size =
-            usize::from_str_radix(size_token, 16).map_err(|_| parse_err("invalid chunk size"))?;
+        let chunk_size = usize::from_str_radix(size_token, 16).map_err(|_| parse_err("invalid chunk size"))?;
 
         if chunk_size == 0 {
             let _ = read_line(stream)?;
@@ -216,7 +236,7 @@ mod tests
         let mut cursor = Cursor::new(payload.to_vec());
         let message = read_http_response(&mut cursor)?;
         assert!(message.ends_with(b"ok"));
-        assert_eq!(cursor.position() as usize, payload.len());
+        assert_eq!(cursor.position(), payload.len() as u64);
         Ok(())
     }
 
@@ -226,6 +246,9 @@ mod tests
         let payload = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n";
         let mut cursor = Cursor::new(payload.to_vec());
         let message = read_http_response(&mut cursor)?;
+        let text = std::str::from_utf8(&message)?;
+        assert!(text.contains("Content-Length: 5"));
+        assert!(!text.contains("Transfer-Encoding"));
         assert!(message.ends_with(b"hello"));
         Ok(())
     }

@@ -44,7 +44,6 @@ impl Observability
 {
     fn start(context: &Arc<RwLock<Context>>) -> MzaniResult<ObservabilityStartup>
     {
-        let logger = Logger::new()?;
         let metrics = Arc::new(Mutex::new(Metrics::default()));
         let next_req_id = Arc::new(AtomicU64::new(1));
         let dropped_logs = Arc::new(AtomicU64::new(0));
@@ -53,11 +52,13 @@ impl Observability
 
         let listen_addr;
         let backends;
+        let log_dir;
         {
             let ctx = context
                 .read()
                 .map_err(|_| MzaniError::LoggerInit("context lock poisoned during pool start".to_owned()))?;
             listen_addr = ctx.socket_addr();
+            log_dir = ctx.log_dir().to_path_buf();
             backends = ctx
                 .target_servers()
                 .iter()
@@ -65,6 +66,8 @@ impl Observability
                 .collect::<Vec<_>>()
                 .join(",");
         }
+
+        let logger = Logger::new_in_dir(&log_dir)?;
 
         if let Some(mut ctx) = write_context(context) {
             ctx.attach_observability(
@@ -278,10 +281,9 @@ fn metrics_aggregator_loop(receiver: &Receiver<RequestStats>, metrics: &Arc<Mute
 mod tests
 {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use std::sync::atomic::AtomicUsize;
     use std::sync::{Arc, RwLock, mpsc};
     use std::time::Duration;
-
-    use std::sync::atomic::AtomicUsize;
 
     use super::{DEFAULT_WORKER_COUNT, ThreadPool, dispatch_worker_index};
     use crate::state::context::Context;

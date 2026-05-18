@@ -1,6 +1,7 @@
 use std::env;
 use std::io::Write;
 use std::net::{SocketAddr, TcpStream};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, RwLock, RwLockWriteGuard};
@@ -26,6 +27,7 @@ pub struct Context
 {
     idx: usize,
     socket_addr: SocketAddr,
+    log_dir: PathBuf,
     target_servers: Vec<SocketAddr>,
     log_tx: Option<Sender<LogRecord>>,
     metrics_tx: Option<Sender<RequestStats>>,
@@ -51,13 +53,35 @@ impl Context
     #[must_use = "context must be constructed to run the server"]
     pub fn new(server_list: Vec<SocketAddr>) -> MzaniResult<Self>
     {
+        Self::new_with_listen(server_list, Self::listen_addr_from_env()?)
+    }
+
+    /// Creates a context with an explicit listen address (used in tests and tooling).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MzaniError::EmptyServerList`] if `server_list` is empty.
+    pub fn new_with_listen(server_list: Vec<SocketAddr>, listen: SocketAddr) -> MzaniResult<Self>
+    {
+        Self::new_with_options(server_list, listen, None)
+    }
+
+    /// Creates a context with explicit listen and log directories (for integration tests).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MzaniError::EmptyServerList`] if `server_list` is empty.
+    pub fn new_with_options(server_list: Vec<SocketAddr>, listen: SocketAddr, log_dir: Option<PathBuf>)
+    -> MzaniResult<Self>
+    {
         if server_list.is_empty() {
             return Err(MzaniError::EmptyServerList);
         }
 
         Ok(Self {
             idx: 0,
-            socket_addr: Self::listen_addr_from_env()?,
+            socket_addr: listen,
+            log_dir: log_dir.unwrap_or_else(|| PathBuf::from("logs")),
             target_servers: server_list,
             log_tx: None,
             metrics_tx: None,
@@ -79,6 +103,13 @@ impl Context
     pub fn target_servers(&self) -> &[SocketAddr]
     {
         &self.target_servers
+    }
+
+    /// Directory where structured logs are written (`mzani.log` inside).
+    #[must_use]
+    pub fn log_dir(&self) -> &Path
+    {
+        &self.log_dir
     }
 
     /// Returns a formatted metrics report.
