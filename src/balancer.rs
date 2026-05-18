@@ -7,12 +7,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::config::BalancerConfig;
-use crate::core::http_util::write_service_unavailable;
 use crate::core::pool::ThreadPool;
 use crate::state::backend::BackendSet;
 use crate::state::context::Context;
 use crate::state::health::HealthMonitor;
 use crate::state::metrics::MetricsSnapshot;
+use crate::utils::http::write_service_unavailable;
 use crate::utils::log_record::LogLevel;
 use crate::utils::logger::{ChannelLogSink, LogSink};
 use crate::{MzaniError, MzaniResult};

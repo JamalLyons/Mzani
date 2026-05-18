@@ -3,6 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::MzaniError;
 
 pub(crate) mod error;
+pub(crate) mod http;
 pub(crate) mod log_record;
 pub(crate) mod logger;
 

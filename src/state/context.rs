@@ -8,13 +8,13 @@ use std::sync::mpsc::SyncSender;
 use std::time::Instant;
 
 use crate::config::{BalancerConfig, Limits, Timeouts};
-use crate::core::http_util::{write_payload_too_large, write_service_unavailable};
 use crate::core::request::Request;
 use crate::core::response::read_http_response;
 use crate::routing::{RoundRobinRouting, RoutingStrategy};
 use crate::state::backend::BackendSet;
 use crate::state::metrics::{Metrics, RequestOutcome, RequestStats};
 use crate::utils::Bytes;
+use crate::utils::http::{write_payload_too_large, write_service_unavailable};
 use crate::utils::log_record::{LogLevel, LogRecord, LogRole, RequestContext, format_addr, parse_status_code, path_for_log};
 use crate::{MzaniError, MzaniResult};
 

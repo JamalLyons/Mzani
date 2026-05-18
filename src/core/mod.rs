@@ -3,7 +3,6 @@ use crate::balancer::Balancer;
 use crate::config::BalancerConfig;
 use crate::state::context::Context;
 
-pub(crate) mod http_util;
 pub(crate) mod pool;
 pub(crate) mod request;
 pub(crate) mod response;

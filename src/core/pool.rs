@@ -7,9 +7,9 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crate::config::PoolConfig;
-use crate::core::http_util::write_service_unavailable;
 use crate::state::context::Context;
 use crate::state::metrics::{Metrics, RequestStats};
+use crate::utils::http::write_service_unavailable;
 use crate::utils::log_record::{LogLevel, LogRecord, LogRole, RequestContext, format_addr, next_request_id};
 use crate::utils::logger::Logger;
 use crate::{MzaniError, MzaniResult};
