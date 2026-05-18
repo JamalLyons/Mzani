@@ -1,13 +1,14 @@
 use std::env;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
-use std::sync::{Arc, RwLock, RwLockWriteGuard};
+use std::sync::mpsc::Sender;
+use std::sync::{Arc, Mutex, RwLock, RwLockWriteGuard};
 use std::time::{Duration, Instant};
 
+use crate::core::pool::LogMessage;
 use crate::core::request::Request;
 use crate::state::metrics::{Metrics, RequestStats};
 use crate::utils::Bytes;
-use crate::utils::logger::Logger;
 use crate::{MzaniError, MzaniResult};
 
 const DEFAULT_LISTEN_ADDR: &str = "127.0.0.1:5000";
@@ -15,20 +16,25 @@ const READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Shared runtime state for the load balancer.
 ///
-/// Holds listen configuration, round-robin backend selection, metrics, and logging.
+/// Holds listen configuration, round-robin backend selection, and handles to
+/// asynchronous logging and metrics workers.
 #[derive(Debug)]
 pub struct Context
 {
     idx: usize,
     socket_addr: SocketAddr,
     target_servers: Vec<SocketAddr>,
-    metrics: Metrics,
-    logger: Logger,
+    log_tx: Option<Sender<LogMessage>>,
+    metrics_tx: Option<Sender<RequestStats>>,
+    metrics: Option<Arc<Mutex<Metrics>>>,
 }
 
 impl Context
 {
     /// Creates a load balancer context with the given backend servers.
+    ///
+    /// Logging and metrics channels are attached when a [`crate::core::pool::ThreadPool`]
+    /// is constructed for this context.
     ///
     /// # Arguments
     ///
@@ -37,7 +43,6 @@ impl Context
     /// # Errors
     ///
     /// Returns [`MzaniError::EmptyServerList`] if `server_list` is empty.
-    /// Returns [`MzaniError::LoggerInit`] if logging cannot be initialized.
     #[must_use = "context must be constructed to run the server"]
     pub fn new(server_list: Vec<SocketAddr>) -> MzaniResult<Self>
     {
@@ -49,8 +54,9 @@ impl Context
             idx: 0,
             socket_addr: Self::listen_addr_from_env()?,
             target_servers: server_list,
-            metrics: Metrics::default(),
-            logger: Logger::new()?,
+            log_tx: None,
+            metrics_tx: None,
+            metrics: None,
         })
     }
 
@@ -65,7 +71,35 @@ impl Context
     #[must_use]
     pub fn metrics_report(&self) -> String
     {
-        self.metrics.format_report()
+        match self.metrics.as_ref().and_then(|metrics| metrics.lock().ok()) {
+            Some(guard) => guard.format_report(),
+            None => Metrics::default().format_report(),
+        }
+    }
+
+    pub(crate) fn attach_observability(
+        &mut self,
+        log_tx: Sender<LogMessage>,
+        metrics_tx: Sender<RequestStats>,
+        metrics: Arc<Mutex<Metrics>>,
+    )
+    {
+        self.log_tx = Some(log_tx);
+        self.metrics_tx = Some(metrics_tx);
+        self.metrics = Some(metrics);
+    }
+
+    pub(crate) fn detach_observability(&mut self)
+    {
+        self.log_tx = None;
+        self.metrics_tx = None;
+        self.metrics = None;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_observability(&self) -> bool
+    {
+        self.log_tx.is_some() && self.metrics_tx.is_some() && self.metrics.is_some()
     }
 
     fn listen_addr_from_env() -> MzaniResult<SocketAddr>
@@ -85,6 +119,20 @@ impl Context
         let target_addr = self.target_servers[self.idx];
         self.idx = (self.idx + 1) % self.target_servers.len();
         target_addr
+    }
+
+    fn enqueue_log(&self, message: LogMessage)
+    {
+        if let Some(tx) = &self.log_tx {
+            let _ = tx.send(message);
+        }
+    }
+
+    fn record_metrics(&self, stats: RequestStats)
+    {
+        if let Some(tx) = &self.metrics_tx {
+            let _ = tx.send(stats);
+        }
     }
 
     /// Proxies a single client TCP connection to a backend server.
@@ -114,10 +162,10 @@ impl Context
             request.path(),
             request.body().len(),
         );
-        self.logger.log(&log_line)?;
+        self.enqueue_log(LogMessage::Request(log_line));
 
         if let Ok(preview) = std::str::from_utf8(&request_bytes[..request_bytes.len().min(512)]) {
-            self.logger.log(preview)?;
+            self.enqueue_log(LogMessage::Request(preview.to_owned()));
         }
 
         let backend_response = Self::proxy_to_backend(&request_bytes, target)?;
@@ -128,13 +176,12 @@ impl Context
         stream.shutdown(std::net::Shutdown::Write)?;
 
         let duration = start_time.elapsed();
-        self.metrics.record_request(RequestStats {
+        self.record_metrics(RequestStats {
             request_len,
             response_len,
             duration,
         });
 
-        self.logger.log(&self.metrics.format_report())?;
         Ok(())
     }
 
@@ -153,7 +200,7 @@ impl Context
 
     pub(crate) fn log_error(&self, message: &str)
     {
-        let _ = self.logger.log_error(message);
+        self.enqueue_log(LogMessage::Error(message.to_owned()));
     }
 }
 
@@ -202,6 +249,23 @@ mod tests
         assert_eq!(first, test_servers()[0]);
         assert_eq!(second, test_servers()[1]);
         assert_eq!(third, test_servers()[0]);
+        Ok(())
+    }
+
+    #[test]
+    fn metrics_report_before_pool_uses_default_snapshot() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let context = Context::new(test_servers())?;
+        let report = context.metrics_report();
+        assert!(report.contains("Total Requests    : 0"));
+        Ok(())
+    }
+
+    #[test]
+    fn observability_unattached_until_pool_starts() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let context = Context::new(test_servers())?;
+        assert!(!context.has_observability());
         Ok(())
     }
 }

@@ -1,10 +1,11 @@
 //! Integration tests for end-to-end HTTP proxying.
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
+use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::Duration;
 
-use mzani::{Context, MzaniError, MzaniResult};
+use mzani::{Context, MzaniError, MzaniResult, ThreadPool};
 
 #[test]
 fn proxies_request_to_backend() -> MzaniResult<()>
@@ -25,9 +26,13 @@ fn proxies_request_to_backend() -> MzaniResult<()>
     let inbound_addr = inbound_listener.local_addr()?;
 
     let proxy_thread = thread::spawn(move || -> MzaniResult<()> {
+        let context = Arc::new(RwLock::new(Context::new(vec![backend_addr])?));
+        let _pool = ThreadPool::new(&context)?;
         let (inbound, _) = inbound_listener.accept()?;
-        let mut context = Context::new(vec![backend_addr])?;
-        context.handle_connection(inbound)
+        let mut guard = context
+            .write()
+            .map_err(|_| MzaniError::ParseError("context lock poisoned".to_owned()))?;
+        guard.handle_connection(inbound)
     });
 
     let mut client = TcpStream::connect(inbound_addr)?;

@@ -20,6 +20,7 @@ const ACCEPT_READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// # Errors
 ///
 /// Returns [`MzaniError::Io`] if binding or accepting connections fails.
+/// Returns [`MzaniError::LoggerInit`] if the log file cannot be created.
 ///
 /// # Examples
 ///
@@ -40,7 +41,7 @@ pub fn create_server(ctx: Context) -> MzaniResult<()>
 {
     let listen_addr = ctx.socket_addr();
     let shared = Arc::new(RwLock::new(ctx));
-    let pool = ThreadPool::new(&shared);
+    let pool = ThreadPool::new(&shared)?;
 
     let listener = TcpListener::bind(listen_addr)?;
     for stream in listener.incoming() {
