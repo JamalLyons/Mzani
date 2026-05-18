@@ -1,0 +1,235 @@
+---
+description: Rust coding standards for mzani — std-only, optimized, idiomatic
+globs: "**/*.rs"
+alwaysApply: true
+---
+
+# Rust Code Guidelines (mzani)
+
+**Core directive:** Prioritize clarity and maintainability over cleverness. Every change must be correct, tested, documented, and as fast as memory allows.
+
+This crate uses **Rust standard library only**. Never add dependencies to `Cargo.toml`. If something is missing, implement it in-tree.
+
+---
+
+## Dependencies and Crate Policy
+
+- **NEVER** add external crates or dev-dependencies.
+- **NEVER** use `unsafe` — the crate forbids it via `[lints.rust] unsafe_code = "forbid"`.
+- Prefer `std` modules: `std::io`, `std::net`, `std::sync`, `std::thread`, `std::collections`, `std::simd` (when stable and applicable).
+- Read `Cargo.lock` only when dependency resolution is directly relevant (it should stay minimal).
+
+---
+
+## Optimization
+
+"Fully optimized" means:
+
+- Choose the best asymptotic complexity for time and memory; justify tradeoffs in PR/commit notes when non-obvious.
+- Prefer stack allocation, pre-sized buffers (`Vec::with_capacity`, fixed arrays), and borrowing over cloning.
+- Use **parallelism** via `std::thread`, `std::thread::scope`, and `std::sync` primitives for CPU-bound work — not external thread pools.
+- Use **SIMD** only through safe std APIs or rely on LLVM auto-vectorization; do not use intrinsics (unsafe is forbidden).
+- Apply `#[inline]` / `#[inline(always)]` only on proven hot paths; avoid blanket inlining.
+- Match the release profile intent: fat LTO, single codegen unit, `panic = "abort"` — write code that benefits from cross-crate optimization.
+
+Avoid clever micro-optimizations without measurement. When performance matters, add `#[cfg(test)]` micro-benchmarks or documented measurement steps.
+
+---
+
+## API Design and Methods
+
+- Prefer **struct methods** (`impl Foo { fn bar(&mut self) }`) over free functions that take `&mut Foo` when logic mutates struct state.
+- Keep functions single-purpose; return early to limit nesting.
+- Prefer borrowing (`&T`, `&mut T`) over ownership when callers do not need ownership.
+- Limit parameters to **5 or fewer**; group extras in a config struct.
+- Use `impl Trait` in arguments/returns when it clarifies intent without naming a concrete type.
+- Prefer `Into<T>` / `From<T>` at API boundaries instead of ad-hoc conversion helpers.
+- Mark types/functions with `#[must_use]` when ignoring the value is likely a bug.
+
+---
+
+## Code Style and Formatting
+
+- Meaningful, descriptive names for variables, functions, and modules.
+- Follow [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/) and idiomatic Rust.
+- **NEVER** use emoji or emoji-like Unicode (e.g. checkmarks/crosses) except in tests that deliberately exercise multibyte input.
+- `snake_case` — functions, variables, modules; `PascalCase` — types, traits, enums; `SCREAMING_SNAKE_CASE` — constants.
+- **NEVER** add tautological or file-summary comments; **NEVER** leak prompts or meta-commentary in source.
+- Run `cargo fmt` before committing; CI should use `cargo fmt --check`.
+
+---
+
+## Documentation
+
+- **MUST** document all public items (`///` on fns, structs, enums, traits, methods).
+- Document parameters, return values, and errors; keep docs in sync with code.
+- Add `# Examples` in doc comments for non-trivial APIs.
+- Satisfy `missing_errors_doc` Clippy lint (already enabled in `Cargo.toml`).
+
+Example:
+
+```rust
+/// Calculate the total cost of items including tax.
+///
+/// # Arguments
+///
+/// * `items` - Slice of item structs with price fields
+/// * `tax_rate` - Tax rate as decimal (e.g. `0.08` for 8%)
+///
+/// # Returns
+///
+/// Total cost including tax.
+///
+/// # Errors
+///
+/// Returns [`CalculationError::EmptyItems`] if `items` is empty.
+/// Returns [`CalculationError::InvalidTaxRate`] if `tax_rate` is negative.
+///
+/// # Examples
+///
+/// ```
+/// # use mzani::Item;
+/// # use mzani::calculate_total;
+/// let items = vec![Item { price: 10.0 }, Item { price: 20.0 }];
+/// let total = calculate_total(&items, 0.08)?;
+/// assert_eq!(total, 32.40);
+/// # Ok::<(), mzani::CalculationError>(())
+/// ```
+pub fn calculate_total(items: &[Item], tax_rate: f64) -> Result<f64, CalculationError> {}
+```
+
+---
+
+## Type System
+
+- Encode invariants in types (newtypes, enums, non-zero integers, bounded wrappers).
+- **NEVER** use `.unwrap()` in library or production paths.
+- Use `.expect("invariant: …")` only for truly impossible states, with a clear invariant message.
+- Prefer `Option<T>` over sentinel values; use meaningful custom error types implementing `std::error::Error`.
+- Derive `Debug`, `Clone`, `PartialEq`, `Eq`, `Hash` where appropriate; use `Default` when a sensible default exists.
+- Make fields **private by default**; expose accessors only when part of the public API.
+- Prefer composition; use builder-style constructors for complex setup.
+
+---
+
+## Error Handling
+
+- Use `Result<T, E>` for fallible operations; propagate with `?`.
+- Implement `Display` and `Error` manually (no `thiserror` — std only).
+- Use `std::io::Error` / `std::fmt::Error` only when they are the natural error type; otherwise define domain errors in `src/utils/error.rs` or a dedicated module.
+
+---
+
+## Control Flow and Iterators
+
+- Prefer iterators and adapters when they improve clarity; use explicit loops when they are clearer or faster.
+- Use `enumerate()` instead of manual index counters.
+- Prefer `if let` / `while let` for single-pattern matches.
+- Match exhaustively; avoid `_` when concrete arms are known and maintainable.
+- Call `.clone()` explicitly on non-`Copy` types; avoid hidden clones in closures and chains.
+
+---
+
+## Memory and Performance
+
+- Prefer `&str` over `String` at API boundaries when ownership is not required.
+- Use `Cow<'_, str>` when ownership may or may not be needed.
+- Pre-allocate with `Vec::with_capacity` / `String::with_capacity` when size is known.
+- Use `Arc` / `Rc` only when shared ownership is required; prefer borrowing and scoped threads.
+- Reuse buffers in hot paths (clear and refill rather than reallocating).
+
+---
+
+## Concurrency (std only)
+
+- Respect `Send` / `Sync` bounds; document why types are thread-safe when non-obvious.
+- CPU-bound parallelism: `std::thread`, `std::thread::scope`, work queues built in-tree.
+- Prefer `std::sync::RwLock` over `Mutex` when reads dominate; prefer channels (`std::sync::mpsc`) for message passing.
+- Avoid holding locks across I/O or long computations; minimize lock scope.
+- Do **not** introduce `rayon`, `crossbeam`, or other external concurrency crates.
+
+---
+
+## Modules and Project Layout
+
+- Public API surface lives in `lib.rs`; keep internals in `src/core/`, `src/state/`, `src/utils/`.
+- One primary type or concern per file when practical.
+- Re-export only what callers need; keep modules cohesive.
+- Use `pub(crate)` for crate-internal APIs instead of making everything `pub`.
+
+---
+
+## Testing
+
+- **MUST** add unit tests for new functions and types (`#[cfg(test)]` modules or `tests/` integration tests).
+- Follow **Arrange-Act-Assert**; use `#[test]` and `cargo test`.
+- Mock **I/O boundaries** via traits and test doubles in-tree — no external mock frameworks.
+- Do not commit commented-out tests or debug-only test helpers.
+- Property-style and multibyte/Unicode edge cases belong in tests when relevant.
+
+---
+
+## Benchmarking
+
+- **NEVER** run benchmarks in parallel (resource contention invalidates results).
+- **NEVER** game benchmarks or tune benchmark harnesses to pass thresholds artificially.
+- **NEVER** use `RUSTFLAGS=-C target-cpu=native` or similar for published comparisons.
+- Compare implementations fairly (same inputs, same optimization level, independent iterations).
+- Disable or reset caching between iterations when measuring cold paths.
+
+---
+
+## Security
+
+- **NEVER** hardcode secrets, API keys, or passwords.
+- Load sensitive config from environment (`std::env`) or a `.env` file parsed manually; ensure `.env` is in `.gitignore`.
+- **NEVER** log passwords, tokens, or PII.
+
+---
+
+## Version Control
+
+- Clear, descriptive commit messages.
+- **NEVER** commit commented-out code, `println!` / `dbg!` debug noise, or credentials.
+
+---
+
+## Tools and CI
+
+| Step | Command |
+|------|---------|
+| Format | `cargo fmt --check` |
+| Build | `cargo build` (no warnings; use `-D warnings` in CI, not `#![deny(warnings)]` in source) |
+| Lint | `cargo clippy -- -D warnings` |
+| Test | `cargo test` |
+| Docs | `cargo doc` |
+
+Clippy groups enabled in this project: `pedantic`, `perf`, `missing_errors_doc` — address or allow with justification.
+
+---
+
+## Before Committing Checklist
+
+- [ ] `cargo test` passes
+- [ ] `cargo build` — no warnings
+- [ ] `cargo clippy -- -D warnings` passes
+- [ ] `cargo fmt --check` passes
+- [ ] Public items have doc comments
+- [ ] No commented-out code or debug prints
+- [ ] No hardcoded credentials
+- [ ] No new `Cargo.toml` dependencies
+
+---
+
+## Additional Rust Best Practices
+
+- Prefer `const` / `const fn` for compile-time constants and pure constructors.
+- Use `matches!` macro for concise boolean predicates.
+- Prefer `slice::sort_by` / `sort_by_key` over hand-rolled sorts unless a specialized O(n) algorithm is required.
+- Use `std::mem::take` / `std::mem::replace` to leave valid dummy state when moving out of `&mut T`.
+- Prefer `enum` with variants over `bool` + parallel fields when states are mutually exclusive.
+- Use `#[non_exhaustive]` on public enums that may grow variants.
+- Gate platform-specific code with `#[cfg(target_os = "...")]` and document supported targets.
+- For I/O: prefer `std::io::Read` / `Write` traits and `BufReader` / `BufWriter` for efficiency.
+- Format strings with `format!`, `write!`, `writeln!` — not manual concatenation in hot paths.
+- When adding features, update `todo.md` or project docs only if the user requests it.
