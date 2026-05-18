@@ -1,13 +1,60 @@
 use std::fmt;
+use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
-/// Per-request statistics passed to [`Metrics::record_request`].
+use crate::utils::log_record::{LogLevel, LogRecord, LogRole, RequestContext, format_addr};
+
+/// Outcome of a proxied request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestOutcome
+{
+    Ok,
+    Error,
+}
+
+impl RequestOutcome
+{
+    fn as_str(self) -> &'static str
+    {
+        match self {
+            Self::Ok => "ok",
+            Self::Error => "error",
+        }
+    }
+}
+
+/// Per-request statistics passed to the metrics aggregator thread.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct RequestStats
 {
+    pub req_id: u64,
+    pub worker_id: usize,
+    pub backend: SocketAddr,
     pub request_len: usize,
     pub response_len: usize,
     pub duration: Duration,
+    pub outcome: RequestOutcome,
+    pub status_code: Option<u16>,
+}
+
+impl RequestStats
+{
+    /// Builds a compact structured log record for the metrics thread.
+    #[must_use]
+    pub fn to_metrics_record(self, req: RequestContext) -> LogRecord
+    {
+        let mut record = LogRecord::new(LogLevel::Info, "metrics_record", LogRole::Metrics)
+            .with_request(req)
+            .field("backend", format_addr(self.backend))
+            .field("req_bytes", self.request_len)
+            .field("resp_bytes", self.response_len)
+            .field("duration_ms", self.duration.as_millis())
+            .field("outcome", self.outcome.as_str());
+        if let Some(status) = self.status_code {
+            record = record.field("status", status);
+        }
+        record
+    }
 }
 
 /// Aggregated load balancer metrics.
@@ -105,6 +152,15 @@ impl Metrics
             Self::format_bytes(self.largest_request_bytes as u64),
         )
     }
+
+    /// Structured log record for periodic aggregate snapshots.
+    #[must_use]
+    pub fn snapshot_record(&self) -> LogRecord
+    {
+        LogRecord::new(LogLevel::Info, "metrics_snapshot", LogRole::Metrics)
+            .field("total_requests", self.total_requests)
+            .field("report", self.format_report())
+    }
 }
 
 impl fmt::Display for Metrics
@@ -118,9 +174,24 @@ impl fmt::Display for Metrics
 #[cfg(test)]
 mod tests
 {
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::time::Duration;
 
-    use super::{Metrics, RequestStats};
+    use super::{Metrics, RequestOutcome, RequestStats};
+
+    fn sample_stats() -> RequestStats
+    {
+        RequestStats {
+            req_id: 1,
+            worker_id: 0,
+            backend: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080),
+            request_len: 100,
+            response_len: 200,
+            duration: Duration::from_millis(10),
+            outcome: RequestOutcome::Ok,
+            status_code: Some(200),
+        }
+    }
 
     #[test]
     fn format_bytes_uses_kilobytes()
@@ -132,11 +203,7 @@ mod tests
     fn record_request_updates_totals()
     {
         let mut metrics = Metrics::default();
-        metrics.record_request(RequestStats {
-            request_len: 100,
-            response_len: 200,
-            duration: Duration::from_millis(10),
-        });
+        metrics.record_request(sample_stats());
         let report = metrics.format_report();
         assert!(report.contains("Total Requests    : 1"));
         assert!(report.contains("300"));
@@ -148,5 +215,13 @@ mod tests
         let metrics = Metrics::default();
         let report = metrics.format_report();
         assert!(report.contains("Total Requests    : 0"));
+    }
+
+    #[test]
+    fn snapshot_record_has_event_name()
+    {
+        let metrics = Metrics::default();
+        let record = metrics.snapshot_record();
+        assert_eq!(record.event, "metrics_snapshot");
     }
 }

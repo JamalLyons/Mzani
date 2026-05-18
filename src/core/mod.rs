@@ -5,11 +5,13 @@ use std::time::Duration;
 use crate::MzaniResult;
 use crate::core::pool::ThreadPool;
 use crate::state::context::{Context, write_context};
+use crate::utils::log_record::LogLevel;
 
 pub(crate) mod pool;
 pub(crate) mod request;
 
 const ACCEPT_READ_TIMEOUT: Duration = Duration::from_secs(30);
+const CONNECTION_QUEUE_CAPACITY: usize = 64;
 
 /// Runs the load balancer accept loop and worker pool until the listener exits.
 ///
@@ -49,7 +51,11 @@ pub fn create_server(ctx: Context) -> MzaniResult<()>
             Ok(stream) => {
                 if let Err(error) = stream.set_read_timeout(Some(ACCEPT_READ_TIMEOUT)) {
                     if let Some(context) = write_context(&shared) {
-                        context.log_error(&format!("failed to set read timeout: {error}"));
+                        context.log_accept_event(
+                            "accept_read_timeout_set_failed",
+                            LogLevel::Warn,
+                            &[("error", error.to_string())],
+                        );
                     }
                     continue;
                 }
@@ -57,12 +63,23 @@ pub fn create_server(ctx: Context) -> MzaniResult<()>
                 if let Err(error) = pool.submit(stream)
                     && let Some(context) = write_context(&shared)
                 {
-                    context.log_error(&format!("worker pool saturated: {error}"));
+                    context.log_accept_event(
+                        "pool_saturated",
+                        LogLevel::Warn,
+                        &[
+                            ("error", error.to_string()),
+                            ("queue_capacity", CONNECTION_QUEUE_CAPACITY.to_string()),
+                        ],
+                    );
                 }
             }
             Err(error) => {
                 if let Some(context) = write_context(&shared) {
-                    context.log_error(&format!("accept error: {error}"));
+                    context.log_accept_event(
+                        "accept_error",
+                        LogLevel::Error,
+                        &[("error", error.to_string()), ("listen", listen_addr.to_string())],
+                    );
                 }
             }
         }

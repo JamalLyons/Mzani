@@ -3,19 +3,20 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use crate::utils::now;
+use crate::utils::log_record::{LogLevel, LogRecord};
 use crate::{MzaniError, MzaniResult};
 
-/// Thread-safe file logger for request and error output.
+/// Thread-safe file logger for structured log records.
 #[derive(Debug)]
 pub(crate) struct Logger
 {
     file_handle: Arc<Mutex<std::fs::File>>,
+    min_level: LogLevel,
 }
 
 impl Logger
 {
-    /// Creates a logger that writes timestamped entries under `logs/`.
+    /// Creates a logger that writes under `logs/` with level filter from `MZANI_LOG`.
     ///
     /// # Errors
     ///
@@ -26,8 +27,7 @@ impl Logger
         fs::create_dir_all(&log_dir)
             .map_err(|error| MzaniError::LoggerInit(format!("failed to create log directory: {error}")))?;
 
-        let timestamp = now()?;
-        let log_path = log_dir.join(format!("mzani-{timestamp}.log"));
+        let log_path = log_dir.join("mzani.log");
         let file_handle = OpenOptions::new()
             .create(true)
             .append(true)
@@ -36,6 +36,7 @@ impl Logger
 
         Ok(Self {
             file_handle: Arc::new(Mutex::new(file_handle)),
+            min_level: LogLevel::from_env(),
         })
     }
 
@@ -46,29 +47,19 @@ impl Logger
             .map_err(|_| MzaniError::LoggerInit("log file mutex poisoned".to_owned()))
     }
 
-    /// Writes a request preview line to the log file.
+    /// Writes a structured log record as one line.
     ///
     /// # Errors
     ///
     /// Returns [`MzaniError::Io`] if writing fails.
-    pub fn log(&self, message: &str) -> MzaniResult<()>
+    pub fn write_record(&self, record: &LogRecord) -> MzaniResult<()>
     {
-        let timestamp = now()?;
+        if !record.meets_min_level(self.min_level) {
+            return Ok(());
+        }
+        let line = record.format_line();
         let mut file = self.lock_file()?;
-        writeln!(file, "[{timestamp}] REQUEST\n\n{message}\n").map_err(|error| MzaniError::io(&error))?;
-        Ok(())
-    }
-
-    /// Writes an error or diagnostic line to the log file.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`MzaniError::Io`] if writing fails.
-    pub fn log_error(&self, message: &str) -> MzaniResult<()>
-    {
-        let timestamp = now()?;
-        let mut file = self.lock_file()?;
-        writeln!(file, "[{timestamp}] ERROR: {message}").map_err(|error| MzaniError::io(&error))?;
+        writeln!(file, "{line}").map_err(|error| MzaniError::io(&error))?;
         Ok(())
     }
 }
@@ -80,9 +71,10 @@ mod tests
     use std::io::Read;
 
     use super::Logger;
+    use crate::utils::log_record::{LogLevel, LogRecord, LogRole};
 
     #[test]
-    fn log_writes_message() -> Result<(), Box<dyn std::error::Error>>
+    fn write_record_appends_line() -> Result<(), Box<dyn std::error::Error>>
     {
         let temp_root = std::env::temp_dir().join(format!("mzani-log-test-{}", std::process::id()));
         fs::create_dir_all(&temp_root)?;
@@ -91,15 +83,17 @@ mod tests
 
         let result = (|| {
             let logger = Logger::new()?;
-            logger.log("hello proxy")?;
+            let record = LogRecord::new(LogLevel::Info, "test_event", LogRole::Log).field("msg", "hello");
+            logger.write_record(&record)?;
             let log_file = fs::read_dir("logs")?
                 .filter_map(Result::ok)
                 .map(|entry| entry.path())
                 .find(|path| path.is_file())
                 .ok_or("missing log file")?;
             let mut contents = String::new();
-            std::fs::File::open(log_file)?.read_to_string(&mut contents)?;
-            assert!(contents.contains("hello proxy"));
+            fs::File::open(log_file)?.read_to_string(&mut contents)?;
+            assert!(contents.contains("event=test_event"));
+            assert!(contents.contains("msg=hello"));
             Ok::<(), Box<dyn std::error::Error>>(())
         })();
 

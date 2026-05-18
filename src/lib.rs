@@ -12,3 +12,4 @@ pub use crate::core::create_server;
 pub use crate::core::pool::ThreadPool;
 pub use crate::state::context::Context;
 pub use crate::utils::error::{MzaniError, MzaniResult};
+pub use crate::utils::log_record::RequestContext;
