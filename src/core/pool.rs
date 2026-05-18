@@ -1,6 +1,6 @@
 use std::fmt;
 use std::net::TcpStream;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
@@ -14,6 +14,7 @@ use crate::{MzaniError, MzaniResult};
 
 const DEFAULT_WORKER_COUNT: usize = 10;
 const CONNECTION_QUEUE_CAPACITY: usize = 64;
+const PER_WORKER_QUEUE_CAPACITY: usize = CONNECTION_QUEUE_CAPACITY.div_ceil(DEFAULT_WORKER_COUNT);
 const METRICS_SNAPSHOT_EVERY_N: u64 = 100;
 const METRICS_SNAPSHOT_INTERVAL: Duration = Duration::from_mins(1);
 
@@ -124,7 +125,8 @@ impl Observability
 pub struct ThreadPool
 {
     context: Arc<RwLock<Context>>,
-    connection_tx: Option<SyncSender<TcpStream>>,
+    connection_txs: Vec<SyncSender<TcpStream>>,
+    dispatch_index: AtomicUsize,
     observability: Observability,
     handles: Vec<PoolThreadHandle>,
 }
@@ -154,13 +156,13 @@ impl ThreadPool
     pub fn new(context: &Arc<RwLock<Context>>) -> MzaniResult<Self>
     {
         let (observability, mut handles) = Observability::start(context)?;
-        let (connection_tx, connection_rx) = mpsc::sync_channel(CONNECTION_QUEUE_CAPACITY);
-        let connection_rx = Arc::new(Mutex::new(connection_rx));
+        let mut connection_txs = Vec::with_capacity(DEFAULT_WORKER_COUNT);
         let next_req_id = Arc::clone(&observability.next_req_id);
         handles.reserve(DEFAULT_WORKER_COUNT);
 
         for worker_id in 0..DEFAULT_WORKER_COUNT {
-            let connection_rx = Arc::clone(&connection_rx);
+            let (connection_tx, connection_rx) = mpsc::sync_channel(PER_WORKER_QUEUE_CAPACITY);
+            connection_txs.push(connection_tx);
             let context = Arc::clone(context);
             let next_req_id = Arc::clone(&next_req_id);
             handles.push((
@@ -171,7 +173,8 @@ impl ThreadPool
 
         Ok(Self {
             context: Arc::clone(context),
-            connection_tx: Some(connection_tx),
+            connection_txs,
+            dispatch_index: AtomicUsize::new(0),
             observability,
             handles,
         })
@@ -184,10 +187,13 @@ impl ThreadPool
     /// Returns [`MzaniError::PoolFull`] if the queue is saturated.
     pub fn submit(&self, stream: TcpStream) -> MzaniResult<()>
     {
-        let Some(sender) = &self.connection_tx else {
+        if self.connection_txs.is_empty() {
             return Err(MzaniError::PoolFull);
-        };
-        sender.send(stream).map_err(|_| MzaniError::PoolFull)
+        }
+        let worker_index = dispatch_worker_index(&self.dispatch_index, self.connection_txs.len());
+        self.connection_txs[worker_index]
+            .send(stream)
+            .map_err(|_| MzaniError::PoolFull)
     }
 }
 
@@ -195,7 +201,7 @@ impl Drop for ThreadPool
 {
     fn drop(&mut self)
     {
-        self.connection_tx = None;
+        self.connection_txs.clear();
         self.observability.shutdown_log();
         Observability::detach_context(&self.context);
         self.observability.metrics_tx = None;
@@ -206,24 +212,20 @@ impl Drop for ThreadPool
     }
 }
 
+/// Selects the next worker queue in round-robin order.
+fn dispatch_worker_index(dispatch_index: &AtomicUsize, worker_count: usize) -> usize
+{
+    dispatch_index.fetch_add(1, Ordering::Relaxed) % worker_count
+}
+
 fn connection_worker_loop(
-    receiver: &Arc<Mutex<Receiver<TcpStream>>>,
+    receiver: &Receiver<TcpStream>,
     context: &Arc<RwLock<Context>>,
     worker_id: usize,
     next_req_id: &AtomicU64,
 )
 {
-    loop {
-        let stream = {
-            let Ok(receiver) = receiver.lock() else {
-                break;
-            };
-            match receiver.recv() {
-                Ok(stream) => stream,
-                Err(_) => break,
-            }
-        };
-
+    while let Ok(stream) = receiver.recv() {
         let req_id = next_request_id(next_req_id);
         let req = RequestContext { req_id, worker_id };
 
@@ -279,7 +281,9 @@ mod tests
     use std::sync::{Arc, RwLock, mpsc};
     use std::time::Duration;
 
-    use super::ThreadPool;
+    use std::sync::atomic::AtomicUsize;
+
+    use super::{DEFAULT_WORKER_COUNT, ThreadPool, dispatch_worker_index};
     use crate::state::context::Context;
     use crate::utils::log_record::{LogLevel, LogRecord, LogRole};
 
@@ -308,6 +312,20 @@ mod tests
         }
 
         Ok(())
+    }
+
+    #[test]
+    fn dispatch_worker_index_round_robins()
+    {
+        let dispatch = AtomicUsize::new(0);
+        let mut seen = [0usize; DEFAULT_WORKER_COUNT];
+        for _ in 0..DEFAULT_WORKER_COUNT * 3 {
+            let worker = dispatch_worker_index(&dispatch, DEFAULT_WORKER_COUNT);
+            seen[worker] += 1;
+        }
+        for count in seen {
+            assert_eq!(count, 3);
+        }
     }
 
     #[test]
