@@ -77,7 +77,7 @@ impl Request
     /// Returns [`MzaniError`] on I/O failures, malformed headers, or empty input.
     pub fn from_stream(stream: &mut TcpStream) -> MzaniResult<Self>
     {
-        let (raw_head, body_prefix) = read_headers(stream)?;
+        let (raw_head, body_prefix) = read_header_block(stream)?;
         let (method, path, headers) = parse_head(&raw_head)?;
         let content_length = content_length(&headers)?;
 
@@ -137,7 +137,8 @@ impl Request
     }
 }
 
-fn read_headers(stream: &mut impl Read) -> MzaniResult<(Bytes, Bytes)>
+/// Reads bytes until the HTTP header terminator (`\r\n\r\n`).
+pub(crate) fn read_header_block(stream: &mut impl Read) -> MzaniResult<(Bytes, Bytes)>
 {
     const CHUNK_SIZE: usize = 4096;
     let mut buf: Bytes = Vec::with_capacity(CHUNK_SIZE);
@@ -163,14 +164,12 @@ fn read_headers(stream: &mut impl Read) -> MzaniResult<(Bytes, Bytes)>
     }
 }
 
-fn parse_head(raw_head: &[u8]) -> MzaniResult<ParsedHead>
+/// Parses header fields from an HTTP message head (request or response).
+pub(crate) fn parse_header_fields(raw_head: &[u8]) -> MzaniResult<Vec<(String, String)>>
 {
     let head = std::str::from_utf8(raw_head).map_err(|_| parse_err("invalid utf-8 in headers"))?;
     let mut lines = head.split("\r\n");
-    let request_line = lines.next().ok_or_else(|| parse_err("missing request line"))?;
-    let mut parts = request_line.split_whitespace();
-    let method = HttpMethod::parse(parts.next().ok_or_else(|| parse_err("missing method"))?);
-    let path = parts.next().ok_or_else(|| parse_err("missing path"))?.to_owned();
+    let _start_line = lines.next().ok_or_else(|| parse_err("missing start line"))?;
 
     let mut headers = Vec::new();
     for line in lines {
@@ -181,17 +180,37 @@ fn parse_head(raw_head: &[u8]) -> MzaniResult<ParsedHead>
         headers.push((name.trim().to_owned(), value.trim().to_owned()));
     }
 
+    Ok(headers)
+}
+
+fn parse_head(raw_head: &[u8]) -> MzaniResult<ParsedHead>
+{
+    let head = std::str::from_utf8(raw_head).map_err(|_| parse_err("invalid utf-8 in headers"))?;
+    let mut lines = head.split("\r\n");
+    let request_line = lines.next().ok_or_else(|| parse_err("missing request line"))?;
+    let mut parts = request_line.split_whitespace();
+    let method = HttpMethod::parse(parts.next().ok_or_else(|| parse_err("missing method"))?);
+    let path = parts.next().ok_or_else(|| parse_err("missing path"))?.to_owned();
+    let headers = parse_header_fields(raw_head)?;
+
     Ok((method, path, headers))
+}
+
+/// Returns the value of the first header matching `name` (case-insensitive).
+pub(crate) fn header_field<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str>
+{
+    headers
+        .iter()
+        .find(|(header, _)| header.eq_ignore_ascii_case(name))
+        .map(|(_, value)| value.as_str())
 }
 
 fn content_length(headers: &[(String, String)]) -> MzaniResult<usize>
 {
-    for (name, value) in headers {
-        if name.eq_ignore_ascii_case("content-length") {
-            return value.parse::<usize>().map_err(|_| parse_err("invalid content-length"));
-        }
+    match header_field(headers, "content-length") {
+        Some(value) => value.parse::<usize>().map_err(|_| parse_err("invalid content-length")),
+        None => Ok(0),
     }
-    Ok(0)
 }
 
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize>
@@ -204,7 +223,7 @@ mod tests
 {
     use std::io::Cursor;
 
-    use super::{HEADER_END, HttpMethod, Request, content_length, find_subslice, parse_head, read_headers};
+    use super::{HEADER_END, HttpMethod, Request, content_length, find_subslice, parse_head, read_header_block};
 
     #[test]
     fn find_subslice_locates_delimiter()
@@ -241,7 +260,7 @@ mod tests
     {
         let payload = b"POST / HTTP/1.1\r\nContent-Length: 4\r\n\r\nbody";
         let mut cursor = Cursor::new(payload.to_vec());
-        let (raw_head, body_prefix) = read_headers(&mut cursor)?;
+        let (raw_head, body_prefix) = read_header_block(&mut cursor)?;
         assert!(raw_head.ends_with(HEADER_END));
         assert_eq!(body_prefix, b"body");
         Ok(())

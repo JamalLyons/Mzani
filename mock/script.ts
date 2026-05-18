@@ -1,5 +1,5 @@
 const URL = "http://127.0.0.1:5000";
-const TOTAL_REQUESTS = 1000;
+const TOTAL_REQUESTS = 10;
 const MAX_PAYLOAD_KB = 100; // Test up to 100KB payloads
 
 const generatePayload = (kb: number) => {

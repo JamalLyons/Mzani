@@ -10,12 +10,18 @@ run:
 
 run-mock-test:
     #!/usr/bin/env bash
+    set -euo pipefail
+
+    cargo run -- 127.0.0.1:5000 & MZANI_PID=$!
+    
+    sleep 0.5
+    
     bun run mock/server.ts 3333 & PID1=$!
     bun run mock/server.ts 3334 & PID2=$!
 
-    trap "kill $PID1 $PID2" EXIT
+    trap 'kill $MZANI_PID $PID1 $PID2 2>/dev/null || true' EXIT
 
-    sleep 0.5
+    sleep 1
 
     bun run mock/script.ts
 

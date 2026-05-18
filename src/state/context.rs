@@ -1,5 +1,5 @@
 use std::env;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::net::{SocketAddr, TcpStream};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex, RwLock, RwLockWriteGuard};
 use std::time::{Duration, Instant};
 
 use crate::core::request::Request;
+use crate::core::response::read_http_response;
 use crate::state::metrics::{Metrics, RequestOutcome, RequestStats};
 use crate::utils::Bytes;
 use crate::utils::log_record::{LogLevel, LogRecord, LogRole, RequestContext, format_addr, parse_status_code, path_for_log};
@@ -333,12 +334,7 @@ impl Context
         let mut backend_stream = TcpStream::connect(target_addr)?;
         backend_stream.set_read_timeout(Some(READ_TIMEOUT))?;
         backend_stream.write_all(bytes)?;
-        backend_stream.shutdown(std::net::Shutdown::Write)?;
-
-        let mut backend_reader = std::io::BufReader::new(&backend_stream);
-        let mut response_data = Vec::new();
-        backend_reader.read_to_end(&mut response_data)?;
-        Ok(response_data)
+        read_http_response(&mut backend_stream)
     }
 }
 

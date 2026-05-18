@@ -59,7 +59,11 @@ impl From<io::Error> for MzaniError
 {
     fn from(error: io::Error) -> Self
     {
-        Self::io(&error)
+        if error.kind() == io::ErrorKind::TimedOut {
+            Self::Timeout
+        } else {
+            Self::io(&error)
+        }
     }
 }
 

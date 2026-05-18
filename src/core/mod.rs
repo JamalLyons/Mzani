@@ -9,6 +9,7 @@ use crate::utils::log_record::LogLevel;
 
 pub(crate) mod pool;
 pub(crate) mod request;
+pub(crate) mod response;
 
 const ACCEPT_READ_TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECTION_QUEUE_CAPACITY: usize = 64;
