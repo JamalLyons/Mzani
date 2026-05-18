@@ -12,8 +12,7 @@ use support::{
 
 const LARGE_BODY_BYTES: usize = 32 * 1024;
 
-fn header_value<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str>
-{
+fn header_value<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
     headers
         .iter()
         .find(|(key, _)| key.eq_ignore_ascii_case(name))
@@ -21,14 +20,11 @@ fn header_value<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a s
 }
 
 #[test]
-#[serial_test::file_serial]
-fn forwards_each_standard_http_method() -> MzaniResult<()>
-{
+fn forwards_each_standard_http_method() -> MzaniResult<()> {
     with_temp_workspace(forwards_each_standard_http_method_impl)
 }
 
-fn forwards_each_standard_http_method_impl(workspace: &TestWorkspace) -> MzaniResult<()>
-{
+fn forwards_each_standard_http_method_impl(workspace: &TestWorkspace) -> MzaniResult<()> {
     let methods = [
         ("GET", BackendReply::OkText("get-ok")),
         ("POST", BackendReply::OkText("post-ok")),
@@ -71,14 +67,11 @@ fn forwards_each_standard_http_method_impl(workspace: &TestWorkspace) -> MzaniRe
 }
 
 #[test]
-#[serial_test::file_serial]
-fn forwards_custom_headers_and_request_body() -> MzaniResult<()>
-{
+fn forwards_custom_headers_and_request_body() -> MzaniResult<()> {
     with_temp_workspace(forwards_custom_headers_and_request_body_impl)
 }
 
-fn forwards_custom_headers_and_request_body_impl(workspace: &TestWorkspace) -> MzaniResult<()>
-{
+fn forwards_custom_headers_and_request_body_impl(workspace: &TestWorkspace) -> MzaniResult<()> {
     let body = br#"{"trace":"abc-123"}"#.to_vec();
     let backend = MockBackend::spawn("headers", BackendReply::OkText("ok"), 1)?;
     let mut proxy = ProxyHarness::start(vec![backend.addr], workspace.log_dir())?;
@@ -102,14 +95,11 @@ fn forwards_custom_headers_and_request_body_impl(workspace: &TestWorkspace) -> M
 }
 
 #[test]
-#[serial_test::file_serial]
-fn forwards_large_post_body_intact() -> MzaniResult<()>
-{
+fn forwards_large_post_body_intact() -> MzaniResult<()> {
     with_temp_workspace(forwards_large_post_body_intact_impl)
 }
 
-fn forwards_large_post_body_intact_impl(workspace: &TestWorkspace) -> MzaniResult<()>
-{
+fn forwards_large_post_body_intact_impl(workspace: &TestWorkspace) -> MzaniResult<()> {
     let body = vec![b'Z'; LARGE_BODY_BYTES];
     let backend = MockBackend::spawn("large", BackendReply::OkText("big"), 1)?;
     let mut proxy = ProxyHarness::start(vec![backend.addr], workspace.log_dir())?;
@@ -131,14 +121,11 @@ fn forwards_large_post_body_intact_impl(workspace: &TestWorkspace) -> MzaniResul
 }
 
 #[test]
-#[serial_test::file_serial]
-fn returns_chunked_backend_response_to_client() -> MzaniResult<()>
-{
+fn returns_chunked_backend_response_to_client() -> MzaniResult<()> {
     with_temp_workspace(returns_chunked_backend_response_to_client_impl)
 }
 
-fn returns_chunked_backend_response_to_client_impl(workspace: &TestWorkspace) -> MzaniResult<()>
-{
+fn returns_chunked_backend_response_to_client_impl(workspace: &TestWorkspace) -> MzaniResult<()> {
     let backend = MockBackend::spawn("chunked", BackendReply::Chunked("chunked-ok"), 1)?;
     let mut proxy = ProxyHarness::start(vec![backend.addr], workspace.log_dir())?;
 
@@ -151,14 +138,11 @@ fn returns_chunked_backend_response_to_client_impl(workspace: &TestWorkspace) ->
 }
 
 #[test]
-#[serial_test::file_serial]
-fn returns_error_status_and_body_from_backend() -> MzaniResult<()>
-{
+fn returns_error_status_and_body_from_backend() -> MzaniResult<()> {
     with_temp_workspace(returns_error_status_and_body_from_backend_impl)
 }
 
-fn returns_error_status_and_body_from_backend_impl(workspace: &TestWorkspace) -> MzaniResult<()>
-{
+fn returns_error_status_and_body_from_backend_impl(workspace: &TestWorkspace) -> MzaniResult<()> {
     let backend = MockBackend::spawn("404", BackendReply::NotFound("missing"), 1)?;
     let mut proxy = ProxyHarness::start(vec![backend.addr], workspace.log_dir())?;
 
@@ -171,14 +155,11 @@ fn returns_error_status_and_body_from_backend_impl(workspace: &TestWorkspace) ->
 }
 
 #[test]
-#[serial_test::file_serial]
-fn waits_for_slow_backend_before_responding() -> MzaniResult<()>
-{
+fn waits_for_slow_backend_before_responding() -> MzaniResult<()> {
     with_temp_workspace(waits_for_slow_backend_before_responding_impl)
 }
 
-fn waits_for_slow_backend_before_responding_impl(workspace: &TestWorkspace) -> MzaniResult<()>
-{
+fn waits_for_slow_backend_before_responding_impl(workspace: &TestWorkspace) -> MzaniResult<()> {
     let delayed = b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: keep-alive\r\n\r\ndelayed";
     let backend = MockBackend::spawn(
         "slow",
@@ -201,14 +182,11 @@ fn waits_for_slow_backend_before_responding_impl(workspace: &TestWorkspace) -> M
 }
 
 #[test]
-#[serial_test::file_serial]
-fn round_robin_directs_traffic_across_backends() -> MzaniResult<()>
-{
+fn round_robin_directs_traffic_across_backends() -> MzaniResult<()> {
     with_temp_workspace(round_robin_directs_traffic_across_backends_impl)
 }
 
-fn round_robin_directs_traffic_across_backends_impl(workspace: &TestWorkspace) -> MzaniResult<()>
-{
+fn round_robin_directs_traffic_across_backends_impl(workspace: &TestWorkspace) -> MzaniResult<()> {
     let backend_a = MockBackend::spawn("a", BackendReply::OkText("from-a"), 3)?;
     let backend_b = MockBackend::spawn("b", BackendReply::OkText("from-b"), 3)?;
     let mut proxy = ProxyHarness::start(vec![backend_a.addr, backend_b.addr], workspace.log_dir())?;
@@ -239,14 +217,11 @@ fn round_robin_directs_traffic_across_backends_impl(workspace: &TestWorkspace) -
 }
 
 #[test]
-#[serial_test::file_serial]
-fn preserves_opaque_method_for_extension_verbs() -> MzaniResult<()>
-{
+fn preserves_opaque_method_for_extension_verbs() -> MzaniResult<()> {
     with_temp_workspace(preserves_opaque_method_for_extension_verbs_impl)
 }
 
-fn preserves_opaque_method_for_extension_verbs_impl(workspace: &TestWorkspace) -> MzaniResult<()>
-{
+fn preserves_opaque_method_for_extension_verbs_impl(workspace: &TestWorkspace) -> MzaniResult<()> {
     let backend = MockBackend::spawn("custom", BackendReply::OkText("queued"), 1)?;
     let mut proxy = ProxyHarness::start(vec![backend.addr], workspace.log_dir())?;
 
@@ -261,14 +236,11 @@ fn preserves_opaque_method_for_extension_verbs_impl(workspace: &TestWorkspace) -
 }
 
 #[test]
-#[serial_test::file_serial]
-fn structured_logging_on_proxy_path() -> MzaniResult<()>
-{
+fn structured_logging_on_proxy_path() -> MzaniResult<()> {
     with_temp_workspace(run_logging_smoke_test)
 }
 
-fn run_logging_smoke_test(workspace: &TestWorkspace) -> MzaniResult<()>
-{
+fn run_logging_smoke_test(workspace: &TestWorkspace) -> MzaniResult<()> {
     let backend = MockBackend::spawn("log", BackendReply::OkText("ok"), 1)?;
     let mut proxy = ProxyHarness::start(vec![backend.addr], workspace.log_dir())?;
 
@@ -285,14 +257,11 @@ fn run_logging_smoke_test(workspace: &TestWorkspace) -> MzaniResult<()>
 }
 
 #[test]
-#[serial_test::file_serial]
-fn response_bytes_match_wire_format_for_status_line() -> MzaniResult<()>
-{
+fn response_bytes_match_wire_format_for_status_line() -> MzaniResult<()> {
     with_temp_workspace(response_bytes_match_wire_format_for_status_line_impl)
 }
 
-fn response_bytes_match_wire_format_for_status_line_impl(workspace: &TestWorkspace) -> MzaniResult<()>
-{
+fn response_bytes_match_wire_format_for_status_line_impl(workspace: &TestWorkspace) -> MzaniResult<()> {
     let backend = MockBackend::spawn(
         "created",
         BackendReply::Raw(b"HTTP/1.1 201 Created\r\nContent-Length: 7\r\n\r\ncreated"),

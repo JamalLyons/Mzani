@@ -10,20 +10,17 @@ const HEADER_END: &[u8] = b"\r\n\r\n";
 
 /// Client request template used by the traffic-director tests.
 #[derive(Debug, Clone)]
-pub struct HttpRequestSpec
-{
+pub struct HttpRequestSpec {
     pub method: &'static str,
     pub path: &'static str,
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
 }
 
-impl HttpRequestSpec
-{
+impl HttpRequestSpec {
     /// GET with optional extra headers.
     #[must_use]
-    pub fn get(path: &'static str) -> Self
-    {
+    pub fn get(path: &'static str) -> Self {
         Self {
             method: "GET",
             path,
@@ -34,16 +31,14 @@ impl HttpRequestSpec
 
     /// Request with a body; adds `Content-Length` automatically.
     #[must_use]
-    pub fn with_body(mut self, body: Vec<u8>) -> Self
-    {
+    pub fn with_body(mut self, body: Vec<u8>) -> Self {
         self.body = body;
         self
     }
 
     /// Appends a header pair.
     #[must_use]
-    pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self
-    {
+    pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.headers.push((name.into(), value.into()));
         self
     }
@@ -51,8 +46,7 @@ impl HttpRequestSpec
 
 /// Parsed HTTP response returned to the test client.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HttpResponse
-{
+pub struct HttpResponse {
     pub status: u16,
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
@@ -60,8 +54,7 @@ pub struct HttpResponse
 
 /// Request observed by a mock backend.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RecordedRequest
-{
+pub struct RecordedRequest {
     pub method: String,
     pub path: String,
     pub headers: Vec<(String, String)>,
@@ -70,8 +63,7 @@ pub struct RecordedRequest
 
 /// Serializes an HTTP/1.1 request.
 #[must_use]
-pub fn build_request(spec: &HttpRequestSpec) -> Vec<u8>
-{
+pub fn build_request(spec: &HttpRequestSpec) -> Vec<u8> {
     let mut message = format!("{} {} HTTP/1.1\r\n", spec.method, spec.path);
     let mut headers = spec.headers.clone();
     if !spec.body.is_empty() && !headers.iter().any(|(name, _)| name.eq_ignore_ascii_case("content-length")) {
@@ -92,8 +84,7 @@ pub fn build_request(spec: &HttpRequestSpec) -> Vec<u8>
 }
 
 /// Sends a request to `addr` and reads the full response (until the server closes).
-pub fn exchange(addr: std::net::SocketAddr, spec: &HttpRequestSpec) -> MzaniResult<HttpResponse>
-{
+pub fn exchange(addr: std::net::SocketAddr, spec: &HttpRequestSpec) -> MzaniResult<HttpResponse> {
     use std::time::Duration;
 
     let mut stream = TcpStream::connect(addr)?;
@@ -114,8 +105,7 @@ pub fn exchange(addr: std::net::SocketAddr, spec: &HttpRequestSpec) -> MzaniResu
 }
 
 /// Parses status, headers, and body from a response buffer with `Content-Length` or chunked encoding.
-pub fn parse_response(raw: &[u8]) -> MzaniResult<HttpResponse>
-{
+pub fn parse_response(raw: &[u8]) -> MzaniResult<HttpResponse> {
     let header_end = raw
         .windows(HEADER_END.len())
         .position(|window| window == HEADER_END)
@@ -150,8 +140,7 @@ pub fn parse_response(raw: &[u8]) -> MzaniResult<HttpResponse>
     Ok(HttpResponse { status, headers, body })
 }
 
-fn read_response_body(headers: &[(String, String)], status: u16, remainder: &[u8]) -> MzaniResult<Vec<u8>>
-{
+fn read_response_body(headers: &[(String, String)], status: u16, remainder: &[u8]) -> MzaniResult<Vec<u8>> {
     if matches!(status, 100..=199 | 204 | 304) {
         return Ok(Vec::new());
     }
@@ -176,8 +165,7 @@ fn read_response_body(headers: &[(String, String)], status: u16, remainder: &[u8
     Ok(remainder.to_vec())
 }
 
-fn read_chunked_body(mut input: &[u8]) -> MzaniResult<Vec<u8>>
-{
+fn read_chunked_body(mut input: &[u8]) -> MzaniResult<Vec<u8>> {
     let mut body = Vec::new();
     loop {
         let line_end = input
@@ -205,8 +193,7 @@ fn read_chunked_body(mut input: &[u8]) -> MzaniResult<Vec<u8>>
 }
 
 /// Reads a complete HTTP/1.1 request from a backend connection.
-pub fn read_request(stream: &mut TcpStream) -> MzaniResult<RecordedRequest>
-{
+pub fn read_request(stream: &mut TcpStream) -> MzaniResult<RecordedRequest> {
     let raw = read_message(stream)?;
     let header_end = raw
         .windows(HEADER_END.len())
@@ -250,8 +237,7 @@ pub fn read_request(stream: &mut TcpStream) -> MzaniResult<RecordedRequest>
     })
 }
 
-fn read_request_body(headers: &[(String, String)], remainder: &[u8]) -> MzaniResult<Vec<u8>>
-{
+fn read_request_body(headers: &[(String, String)], remainder: &[u8]) -> MzaniResult<Vec<u8>> {
     let length = headers
         .iter()
         .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
@@ -269,8 +255,7 @@ fn read_request_body(headers: &[(String, String)], remainder: &[u8]) -> MzaniRes
     Ok(remainder[..length].to_vec())
 }
 
-fn read_message(stream: &mut TcpStream) -> MzaniResult<Vec<u8>>
-{
+fn read_message(stream: &mut TcpStream) -> MzaniResult<Vec<u8>> {
     let mut buf = Vec::new();
     let mut chunk = [0u8; 4096];
     loop {
@@ -323,21 +308,18 @@ fn read_message(stream: &mut TcpStream) -> MzaniResult<Vec<u8>>
 }
 
 /// Writes a raw HTTP response to the backend connection.
-pub fn write_raw_response(stream: &mut TcpStream, raw: &[u8]) -> MzaniResult<()>
-{
+pub fn write_raw_response(stream: &mut TcpStream, raw: &[u8]) -> MzaniResult<()> {
     stream.write_all(raw)?;
     stream.flush()?;
     Ok(())
 }
 
 #[cfg(test)]
-mod tests
-{
+mod tests {
     use super::{HttpRequestSpec, build_request, parse_response};
 
     #[test]
-    fn build_request_adds_content_length_for_body()
-    {
+    fn build_request_adds_content_length_for_body() {
         let spec = HttpRequestSpec::get("/").with_body(b"payload".to_vec());
         let raw = build_request(&spec);
         let text = String::from_utf8_lossy(&raw);
@@ -346,8 +328,7 @@ mod tests
     }
 
     #[test]
-    fn parse_response_reads_content_length_body() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn parse_response_reads_content_length_body() -> Result<(), Box<dyn std::error::Error>> {
         let raw = b"HTTP/1.1 201 Created\r\nContent-Length: 2\r\n\r\nok";
         let parsed = parse_response(raw)?;
         assert_eq!(parsed.status, 201);

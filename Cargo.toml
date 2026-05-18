@@ -1,7 +1,17 @@
 [package]
 name = "mzani"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
+rust-version = "1.85"
+authors = ["Jamal Lyons"]
+description = "A std-only HTTP/1.x load balancer with health checks, graceful shutdown, and structured metrics"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/JamalLyons/Mzani"
+documentation = "https://docs.rs/mzani"
+keywords = ["load-balancer", "http", "proxy", "reverse-proxy", "stdlib"]
+categories = ["network-programming", "web-programming::http-server"]
+exclude = ["/mock/", "/.cursor/"]
 
 [lints.rust]
 unsafe_code = "forbid"
@@ -24,6 +34,6 @@ codegen-units = 1
 panic = "abort"
 strip = "symbols"
 
-[dev-dependencies]
-serial_test = { version = "3.4.0", features = ["file_locks"] }
-tempfile = "3.27.0"
+[[example]]
+name = "minimal_proxy"
+path = "examples/minimal_proxy.rs"

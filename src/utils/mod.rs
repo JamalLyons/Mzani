@@ -18,8 +18,7 @@ pub type Byte = u8;
 /// # Errors
 ///
 /// Returns [`MzaniError::InvalidTimestamp`] if the system clock is before the epoch.
-pub fn now() -> Result<u64, MzaniError>
-{
+pub fn now() -> Result<u64, MzaniError> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| MzaniError::InvalidTimestamp)
@@ -28,19 +27,16 @@ pub fn now() -> Result<u64, MzaniError>
 
 /// Builds a [`MzaniError::ParseError`] with the given message.
 #[must_use]
-pub fn parse_err(msg: &str) -> MzaniError
-{
+pub fn parse_err(msg: &str) -> MzaniError {
     MzaniError::ParseError(msg.to_owned())
 }
 
 #[cfg(test)]
-mod tests
-{
+mod tests {
     use super::now;
 
     #[test]
-    fn now_returns_positive_seconds() -> Result<(), crate::MzaniError>
-    {
+    fn now_returns_positive_seconds() -> Result<(), crate::MzaniError> {
         let seconds = now()?;
         assert!(seconds > 0);
         Ok(())

@@ -1,5 +1,7 @@
 //! Shared helpers for integration tests.
 
+#![allow(dead_code, unused_imports)]
+
 mod harness;
 mod http;
 mod workspace;

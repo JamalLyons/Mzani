@@ -44,7 +44,7 @@ lint:
     cargo clippy --all-targets -- -D warnings
 
 test:
-    cargo test
+    cargo test -- --test-threads=1
 
 doc:
     cargo doc --no-deps

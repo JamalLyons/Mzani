@@ -1,44 +1,49 @@
-//! Isolated log directories for parallel integration tests.
+//! Isolated log directories for integration tests (std only, no tempfile crate).
 
+use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use mzani::MzaniResult;
-use tempfile::TempDir;
+
+static WORKSPACE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Owns a temp directory used as the proxy log root for one integration test.
-pub struct TestWorkspace
-{
-    _temp: TempDir,
+pub struct TestWorkspace {
+    root: PathBuf,
     log_dir: PathBuf,
 }
 
-impl TestWorkspace
-{
+impl TestWorkspace {
     /// Creates a temp tree with a `logs/` subdirectory for mzani.
     ///
     /// # Errors
     ///
-    /// Returns I/O errors from [`TempDir::new`] or directory creation.
-    pub fn new() -> MzaniResult<Self>
-    {
-        let temp = TempDir::new().map_err(|error| mzani::MzaniError::Io(error.to_string()))?;
-        let log_dir = temp.path().join("logs");
-        std::fs::create_dir_all(&log_dir).map_err(|error| mzani::MzaniError::Io(error.to_string()))?;
-        Ok(Self { _temp: temp, log_dir })
+    /// Returns I/O errors from directory creation.
+    pub fn new() -> MzaniResult<Self> {
+        let id = WORKSPACE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!("mzani_it_{}_{id}", std::process::id()));
+        let log_dir = root.join("logs");
+        fs::create_dir_all(&log_dir).map_err(|error| mzani::MzaniError::Io(error.to_string()))?;
+        Ok(Self { root, log_dir })
     }
 
     /// Log directory passed to [`mzani::Context::new_with_options`].
     #[must_use]
-    pub fn log_dir(&self) -> &Path
-    {
+    pub fn log_dir(&self) -> &Path {
         &self.log_dir
     }
 
     /// Path to the structured log file for assertions.
     #[must_use]
-    pub fn log_file(&self) -> PathBuf
-    {
+    pub fn log_file(&self) -> PathBuf {
         self.log_dir.join("mzani.log")
+    }
+}
+
+impl Drop for TestWorkspace {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
     }
 }
 
